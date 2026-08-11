@@ -99,13 +99,56 @@ def get_directory_roles_and_members():
                 "members": member_details
             })
     return results
+    
+def check_app_certificates_and_permissions():
+    """
+    Audits Service Principals for active certificate credentials (keyCredentials)
+    and checks for high-risk Graph API App Role Assignments like AppRoleAssignment.ReadWrite.All.
+    """
+    headers = _get_graph_headers()
+    url = "https://graph.microsoft.com/v1.0/servicePrincipals?$select=id,appId,displayName,keyCredentials"
+    res = requests.get(url, headers=headers)
+    if res.status_code != 200:
+        return {"error": res.text}
 
+    sps = res.json().get("value", [])
+    findings = []
+
+    for sp in sps:
+        sp_id = sp.get("id")
+        display_name = sp.get("displayName")
+        app_id = sp.get("appId")
+        key_creds = sp.get("keyCredentials", [])
+        has_certs = len(key_creds) > 0
+
+        # Query app role assignments granted to this service principal
+        roles_url = f"https://graph.microsoft.com/v1.0/servicePrincipals/{sp_id}/appRoleAssignments"
+        roles_res = requests.get(roles_url, headers=headers)
+        
+        app_role_assignments = []
+        if roles_res.status_code == 200:
+            app_role_assignments = roles_res.json().get("value", [])
+
+        # Include SPs that have certificates OR active app role assignments
+        if has_certs or app_role_assignments:
+            findings.append({
+                "displayName": display_name,
+                "appId": app_id,
+                "servicePrincipalId": sp_id,
+                "hasCertificates": has_certs,
+                "certificateCount": len(key_creds),
+                "appRoleAssignments": app_role_assignments
+            })
+
+    return findings
+    
 # Tool Mapping
 TOOL_MAP = {
     "get_tenant_users": get_tenant_users,
     "get_conditional_access_policies": get_conditional_access_policies,
     "get_service_principals_and_owners": get_service_principals_and_owners,
     "get_directory_roles_and_members": get_directory_roles_and_members,
+    "check_app_certificates_and_permissions": check_app_certificates_and_permissions,
 }
 
 # OpenAI Function Schemas
@@ -139,6 +182,14 @@ TOOLS_SCHEMA = [
         "function": {
             "name": "get_directory_roles_and_members",
             "description": "Retrieves directory roles (e.g., Global Admin, Privileged Authentication Admin) and all members assigned to them (including Service Principals).",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "check_app_certificates_and_permissions",
+            "description": "Audits all Service Principals for active certificate credentials (keyCredentials) and retrieves their Graph API App Role Assignments (such as AppRoleAssignment.ReadWrite.All).",
             "parameters": {"type": "object", "properties": {}},
         },
     },

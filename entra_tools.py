@@ -45,3 +45,31 @@ def get_conditional_access_policies():
     headers = _get_headers()
     res = requests.get("https://graph.microsoft.com/v1.0/identity/conditionalAccess/policies", headers=headers)
     return res.json().get("value", []) if res.status_code == 200 else {"error": res.text}
+    
+def check_app_certificates_and_permissions(graph_client):
+    """
+    Queries Service Principals for active certificate credentials (keyCredentials)
+    and inspects their Graph API App Role Assignments.
+    """
+    # 1. Get service principals with keyCredentials and appRoleAssignments
+    # Query Graph endpoint: /servicePrincipals?$select=id,appId,displayName,keyCredentials
+    sps = graph_client.get("/servicePrincipals?$select=id,appId,displayName,keyCredentials")
+    
+    results = []
+    for sp in sps.get("value", []):
+        has_certs = len(sp.get("keyCredentials", [])) > 0
+        
+        # 2. Get App Role Assignments (API permissions like AppRoleAssignment.ReadWrite.All)
+        app_roles = graph_client.get(f"/servicePrincipals/{sp['id']}/appRoleAssignments")
+        
+        roles_list = [role.get("principalDisplayName") for role in app_roles.get("value", [])]
+        
+        if has_certs or any("AppRoleAssignment" in r for r in roles_list):
+            results.append({
+                "displayName": sp["displayName"],
+                "appId": sp["appId"],
+                "hasCertificates": has_certs,
+                "appRoleAssignments": app_roles.get("value", [])
+            })
+            
+    return results
